@@ -8,7 +8,7 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
             padding: 20px;
             line-height: 1.6;
@@ -26,39 +26,40 @@
         .input-section {
             margin-bottom: 20px;
             padding: 15px;
-            border: 2px dashed #3498db;
+            background: #fff;
             border-radius: 5px;
-            text-align: center;
+            border: 1px dashed #ccc;
         }
         .preview-section {
-            display: none;
-            margin-top: 20px;
-        }
-        .thumbnail-container {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
-            margin-top: 15px;
+            margin-top: 20px;
         }
-        .thumbnail {
+        .page-thumbnail {
             border: 1px solid #ddd;
             border-radius: 4px;
             padding: 5px;
             background: white;
             cursor: pointer;
+            transition: all 0.3s;
         }
-        .thumbnail.selected {
-            border: 2px solid #3498db;
+        .page-thumbnail:hover {
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
         }
-        .thumbnail img {
-            width: 100px;
+        .page-thumbnail.selected {
+            border-color: #3498db;
+            background-color: #e8f4fc;
+        }
+        .page-thumbnail img {
+            max-width: 100px;
             height: auto;
             display: block;
         }
-        .thumbnail p {
-            margin: 5px 0 0;
+        .page-number {
             text-align: center;
             font-size: 12px;
+            margin-top: 5px;
         }
         button {
             background-color: #3498db;
@@ -68,7 +69,8 @@
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
-            margin-top: 10px;
+            margin-right: 10px;
+            transition: background-color 0.3s;
         }
         button:hover {
             background-color: #2980b9;
@@ -78,33 +80,27 @@
             cursor: not-allowed;
         }
         .controls {
-            margin-top: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .format-selector {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        .loading {
-            display: none;
-            text-align: center;
             margin: 20px 0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
         }
-        .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            border-radius: 50%;
-            border-top: 4px solid #3498db;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #7f8c8d;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .select-all {
+            background-color: #2ecc71;
+        }
+        .select-all:hover {
+            background-color: #27ae60;
+        }
+        .deselect-all {
+            background-color: #e74c3c;
+        }
+        .deselect-all:hover {
+            background-color: #c0392b;
         }
     </style>
 </head>
@@ -113,176 +109,102 @@
         <h1>PDF to Image Converter</h1>
         
         <div class="input-section">
-            <h3>Sélectionnez un fichier PDF</h3>
+            <h3>1. Sélectionnez un fichier PDF</h3>
             <input type="file" id="pdfInput" accept=".pdf">
-            <p>ou glissez-déposez le fichier ici</p>
+            <div class="status" id="loadStatus"></div>
         </div>
         
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>Chargement du PDF...</p>
+        <div class="controls" id="controls" style="display: none;">
+            <h3>2. Sélectionnez les pages à convertir</h3>
+            <button id="selectAll" class="select-all">Tout sélectionner</button>
+            <button id="deselectAll" class="deselect-all">Tout désélectionner</button>
+            <button id="downloadSelected">Télécharger les pages sélectionnées</button>
+            <div class="status" id="downloadStatus"></div>
         </div>
         
-        <div class="preview-section" id="previewSection">
-            <h3>Sélectionnez les pages à convertir</h3>
-            <p>Cliquez sur les miniatures pour sélectionner/désélectionner des pages</p>
-            
-            <div class="controls">
-                <div>
-                    <button id="selectAll">Tout sélectionner</button>
-                    <button id="deselectAll">Tout désélectionner</button>
-                </div>
-                <div class="format-selector">
-                    <label for="format">Format:</label>
-                    <select id="format">
-                        <option value="png">PNG</option>
-                        <option value="jpeg">JPEG</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="thumbnail-container" id="thumbnailContainer"></div>
-            
-            <button id="downloadBtn" disabled>Télécharger les pages sélectionnées</button>
-        </div>
+        <div class="preview-section" id="previewContainer"></div>
     </div>
 
     <script>
-        // Initialisation de PDF.js
+        // Configure PDF.js worker path
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
         
-        // Variables globales
         let pdfDoc = null;
         let selectedPages = new Set();
-        let canvas = document.createElement('canvas');
-        let ctx = canvas.getContext('2d');
+        const scale = 1.5;
         
-        // Éléments DOM
+        // DOM elements
         const pdfInput = document.getElementById('pdfInput');
-        const loadingDiv = document.getElementById('loading');
-        const previewSection = document.getElementById('previewSection');
-        const thumbnailContainer = document.getElementById('thumbnailContainer');
+        const previewContainer = document.getElementById('previewContainer');
+        const loadStatus = document.getElementById('loadStatus');
+        const downloadStatus = document.getElementById('downloadStatus');
+        const controls = document.getElementById('controls');
         const selectAllBtn = document.getElementById('selectAll');
         const deselectAllBtn = document.getElementById('deselectAll');
-        const downloadBtn = document.getElementById('downloadBtn');
-        const formatSelect = document.getElementById('format');
+        const downloadSelectedBtn = document.getElementById('downloadSelected');
         
-        // Gestionnaire d'événements pour le drag and drop
-        const inputSection = document.querySelector('.input-section');
+        // Event listeners
+        pdfInput.addEventListener('change', loadPDF);
+        selectAllBtn.addEventListener('click', selectAllPages);
+        deselectAllBtn.addEventListener('click', deselectAllPages);
+        downloadSelectedBtn.addEventListener('click', downloadSelectedPages);
         
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            inputSection.addEventListener(eventName, preventDefaults, false);
-        });
-        
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-        
-        ['dragenter', 'dragover'].forEach(eventName => {
-            inputSection.addEventListener(eventName, highlight, false);
-        });
-        
-        ['dragleave', 'drop'].forEach(eventName => {
-            inputSection.addEventListener(eventName, unhighlight, false);
-        });
-        
-        function highlight() {
-            inputSection.style.borderColor = '#e74c3c';
-        }
-        
-        function unhighlight() {
-            inputSection.style.borderColor = '#3498db';
-        }
-        
-        inputSection.addEventListener('drop', handleDrop, false);
-        
-        function handleDrop(e) {
-            const dt = e.dataTransfer;
-            const files = dt.files;
+        async function loadPDF(event) {
+            const file = event.target.files[0];
+            if (!file) return;
             
-            if (files.length > 0 && files[0].type === 'application/pdf') {
-                handlePDFFile(files[0]);
-            } else {
-                alert('Veuillez déposer un fichier PDF valide.');
-            }
-        }
-        
-        // Gestionnaire d'événement pour la sélection de fichier
-        pdfInput.addEventListener('change', function(e) {
-            if (e.target.files.length > 0) {
-                handlePDFFile(e.target.files[0]);
-            }
-        });
-        
-        // Fonction pour traiter le fichier PDF
-        async function handlePDFFile(file) {
-            loadingDiv.style.display = 'block';
-            previewSection.style.display = 'none';
-            thumbnailContainer.innerHTML = '';
+            loadStatus.textContent = "Chargement du PDF...";
+            previewContainer.innerHTML = '';
             selectedPages.clear();
+            controls.style.display = 'none';
             
-            const fileReader = new FileReader();
-            
-            fileReader.onload = async function() {
-                try {
-                    const typedArray = new Uint8Array(this.result);
-                    pdfDoc = await pdfjsLib.getDocument(typedArray).promise;
-                    
-                    // Créer des miniatures pour toutes les pages
-                    await createThumbnails();
-                    
-                    loadingDiv.style.display = 'none';
-                    previewSection.style.display = 'block';
-                } catch (error) {
-                    console.error('Error loading PDF:', error);
-                    loadingDiv.style.display = 'none';
-                    alert('Erreur lors du chargement du PDF. Veuillez réessayer avec un autre fichier.');
-                }
-            };
-            
-            fileReader.readAsArrayBuffer(file);
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
+                
+                loadStatus.textContent = `PDF chargé - ${pdfDoc.numPages} page(s)`;
+                controls.style.display = 'block';
+                
+                renderThumbnails();
+            } catch (error) {
+                loadStatus.textContent = "Erreur lors du chargement du PDF: " + error.message;
+                console.error(error);
+            }
         }
         
-        // Créer des miniatures pour toutes les pages
-        async function createThumbnails() {
-            thumbnailContainer.innerHTML = '';
-            
+        async function renderThumbnails() {
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 const page = await pdfDoc.getPage(i);
-                const viewport = page.getViewport({ scale: 0.5 });
+                const viewport = page.getViewport({ scale });
                 
-                canvas.width = viewport.width;
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
                 canvas.height = viewport.height;
+                canvas.width = viewport.width;
                 
                 await page.render({
-                    canvasContext: ctx,
+                    canvasContext: context,
                     viewport: viewport
                 }).promise;
                 
                 const thumbnailDiv = document.createElement('div');
-                thumbnailDiv.className = 'thumbnail';
+                thumbnailDiv.className = 'page-thumbnail';
                 thumbnailDiv.dataset.pageNumber = i;
+                thumbnailDiv.addEventListener('click', () => togglePageSelection(i, thumbnailDiv));
                 
                 const img = document.createElement('img');
-                img.src = canvas.toDataURL('image/jpeg');
-                img.alt = `Page ${i}`;
-                
-                const pageNum = document.createElement('p');
-                pageNum.textContent = `Page ${i}`;
-                
+                img.src = canvas.toDataURL('image/jpeg', 0.7);
                 thumbnailDiv.appendChild(img);
-                thumbnailDiv.appendChild(pageNum);
                 
-                thumbnailDiv.addEventListener('click', function() {
-                    togglePageSelection(i, thumbnailDiv);
-                });
+                const pageNumber = document.createElement('div');
+                pageNumber.className = 'page-number';
+                pageNumber.textContent = `Page ${i}`;
+                thumbnailDiv.appendChild(pageNumber);
                 
-                thumbnailContainer.appendChild(thumbnailDiv);
+                previewContainer.appendChild(thumbnailDiv);
             }
         }
         
-        // Basculer la sélection d'une page
         function togglePageSelection(pageNumber, element) {
             if (selectedPages.has(pageNumber)) {
                 selectedPages.delete(pageNumber);
@@ -292,13 +214,12 @@
                 element.classList.add('selected');
             }
             
-            downloadBtn.disabled = selectedPages.size === 0;
+            updateDownloadButton();
         }
         
-        // Sélectionner toutes les pages
-        selectAllBtn.addEventListener('click', function() {
+        function selectAllPages() {
             selectedPages.clear();
-            const thumbnails = document.querySelectorAll('.thumbnail');
+            const thumbnails = document.querySelectorAll('.page-thumbnail');
             
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 selectedPages.add(i);
@@ -308,60 +229,66 @@
                 thumb.classList.add('selected');
             });
             
-            downloadBtn.disabled = false;
-        });
+            updateDownloadButton();
+        }
         
-        // Désélectionner toutes les pages
-        deselectAllBtn.addEventListener('click', function() {
+        function deselectAllPages() {
             selectedPages.clear();
-            const thumbnails = document.querySelectorAll('.thumbnail');
-            
+            const thumbnails = document.querySelectorAll('.page-thumbnail');
             thumbnails.forEach(thumb => {
                 thumb.classList.remove('selected');
             });
             
-            downloadBtn.disabled = true;
-        });
+            updateDownloadButton();
+        }
         
-        // Télécharger les pages sélectionnées
-        downloadBtn.addEventListener('click', async function() {
+        function updateDownloadButton() {
+            downloadSelectedBtn.disabled = selectedPages.size === 0;
+            downloadSelectedBtn.textContent = selectedPages.size > 0 
+                ? `Télécharger ${selectedPages.size} page(s) sélectionnée(s)` 
+                : 'Télécharger les pages sélectionnées';
+        }
+        
+        async function downloadSelectedPages() {
             if (selectedPages.size === 0) return;
             
-            const format = formatSelect.value;
-            const pages = Array.from(selectedPages).sort((a, b) => a - b);
+            downloadStatus.textContent = "Préparation des images...";
             
-            for (const pageNum of pages) {
-                await downloadPage(pageNum, format);
+            try {
+                // Sort selected pages in numerical order
+                const sortedPages = Array.from(selectedPages).sort((a, b) => a - b);
+                
+                for (const pageNum of sortedPages) {
+                    const page = await pdfDoc.getPage(pageNum);
+                    const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better quality
+                    
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    
+                    await page.render({
+                        canvasContext: context,
+                        viewport: viewport
+                    }).promise;
+                    
+                    // Trigger download
+                    const link = document.createElement('a');
+                    link.href = canvas.toDataURL('image/jpeg', 0.9);
+                    link.download = `page_${pageNum}.jpg`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    // Small delay between downloads to avoid browser restrictions
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                downloadStatus.textContent = `Téléchargement terminé pour ${sortedPages.length} page(s)`;
+            } catch (error) {
+                downloadStatus.textContent = "Erreur lors du téléchargement: " + error.message;
+                console.error(error);
             }
-        });
-        
-        // Télécharger une page individuelle
-        async function downloadPage(pageNumber, format) {
-            const page = await pdfDoc.getPage(pageNumber);
-            const viewport = page.getViewport({ scale: 2.0 }); // Plus haute résolution pour le téléchargement
-            
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            
-            await page.render({
-                canvasContext: ctx,
-                viewport: viewport
-            }).promise;
-            
-            const link = document.createElement('a');
-            let mimeType, ext;
-            
-            if (format === 'jpeg') {
-                mimeType = 'image/jpeg';
-                ext = 'jpg';
-            } else {
-                mimeType = 'image/png';
-                ext = 'png';
-            }
-            
-            link.href = canvas.toDataURL(mimeType);
-            link.download = `page_${pageNumber}.${ext}`;
-            link.click();
         }
     </script>
 </body>
