@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Splitter - Découpage de PDF</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .file-input {
+            margin-bottom: 20px;
+        }
+        .preview-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .page-preview {
+            border: 1px solid #ddd;
+            padding: 5px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .page-preview:hover {
+            box-shadow: 0 0 5px rgba(0, 0, 255, 0.3);
+        }
+        .page-preview.selected {
+            border: 2px solid #3498db;
+            background-color: #e8f4fc;
+        }
+        .page-number {
+            text-align: center;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .page-selection {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        input[type="text"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 200px;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .loading {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top: 4px solid #3498db;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF Splitter - Découpage de PDF</h1>
+        
+        <div class="file-input">
+            <h3>1. Sélectionnez votre fichier PDF</h3>
+            <input type="file" id="pdfInput" accept=".pdf" />
+        </div>
+        
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Chargement du PDF en cours...</p>
+        </div>
+        
+        <div id="pdfInfo" style="display: none;">
+            <h3>2. Sélectionnez les pages à conserver</h3>
+            <div class="page-selection">
+                <button id="selectAll">Tout sélectionner</button>
+                <button id="deselectAll">Tout désélectionner</button>
+                <div>
+                    <label for="pageRange">Ou spécifiez les pages (ex: 1,3-5,7):</label>
+                    <input type="text" id="pageRange" placeholder="1,3-5,7">
+                    <button id="applyRange">Appliquer</button>
+                </div>
+            </div>
+            
+            <div class="preview-container" id="previewContainer"></div>
+            
+            <div class="controls">
+                <div>
+                    <button id="downloadBtn" disabled>Télécharger le PDF découpé</button>
+                </div>
+                <div>
+                    <span id="selectedCount">0 page(s) sélectionnée(s)</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="status" class="status" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Configuration de PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+        
+        // Variables globales
+        let pdfDoc = null;
+        let selectedPages = new Set();
+        const { jsPDF } = window.jspdf;
+        
+        // Éléments DOM
+        const pdfInput = document.getElementById('pdfInput');
+        const previewContainer = document.getElementById('previewContainer');
+        const selectAllBtn = document.getElementById('selectAll');
+        const deselectAllBtn = document.getElementById('deselectAll');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const pageRangeInput = document.getElementById('pageRange');
+        const applyRangeBtn = document.getElementById('applyRange');
+        const selectedCountSpan = document.getElementById('selectedCount');
+        const pdfInfoDiv = document.getElementById('pdfInfo');
+        const loadingDiv = document.getElementById('loading');
+        const statusDiv = document.getElementById('status');
+        
+        // Écouteurs d'événements
+        pdfInput.addEventListener('change', handleFileSelect);
+        selectAllBtn.addEventListener('click', selectAllPages);
+        deselectAllBtn.addEventListener('click', deselectAllPages);
+        downloadBtn.addEventListener('click', generateNewPDF);
+        applyRangeBtn.addEventListener('click', applyPageRange);
+        
+        // Fonction pour gérer la sélection de fichier
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Afficher le loader
+            loadingDiv.style.display = 'block';
+            pdfInfoDiv.style.display = 'none';
+            statusDiv.style.display = 'none';
+            previewContainer.innerHTML = '';
+            selectedPages.clear();
+            updateSelectedCount();
+            
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
+                
+                // Afficher les informations du PDF
+                displayPDFInfo();
+                
+                // Charger les miniatures des pages
+                await renderPageThumbnails();
+                
+                // Afficher la section d'information
+                pdfInfoDiv.style.display = 'block';
+            } catch (error) {
+                showStatus(`Erreur lors du chargement du PDF: ${error.message}`, 'error');
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        }
+        
+        // Afficher les informations du PDF
+        function displayPDFInfo() {
+            const pageCount = pdfDoc.numPages;
+            pageRangeInput.placeholder = `1-${pageCount}`;
+        }
+        
+        // Rendre les miniatures des pages
+        async function renderPageThumbnails() {
+            previewContainer.innerHTML = '';
+            
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const page = await pdfDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 0.5 });
+                
+                const pageDiv = document.createElement('div');
+                pageDiv.className = 'page-preview';
+                pageDiv.dataset.pageNumber = i;
+                pageDiv.addEventListener('click', togglePageSelection);
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: viewport
+                };
+                
+                await page.render(renderContext).promise;
+                
+                const pageNumberDiv = document.createElement('div');
+                pageNumberDiv.className = 'page-number';
+                pageNumberDiv.textContent = `Page ${i}`;
+                
+                pageDiv.appendChild(canvas);
+                pageDiv.appendChild(pageNumberDiv);
+                previewContainer.appendChild(pageDiv);
+            }
+        }
+        
+        // Basculer la sélection d'une page
+        function togglePageSelection(event) {
+            const pageDiv = event.currentTarget;
+            const pageNumber = parseInt(pageDiv.dataset.pageNumber);
+            
+            if (selectedPages.has(pageNumber)) {
+                selectedPages.delete(pageNumber);
+                pageDiv.classList.remove('selected');
+            } else {
+                selectedPages.add(pageNumber);
+                pageDiv.classList.add('selected');
+            }
+            
+            updateSelectedCount();
+        }
+        
+        // Sélectionner toutes les pages
+        function selectAllPages() {
+            selectedPages.clear();
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                selectedPages.add(i);
+            }
+            
+            updatePageSelectionUI();
+            updateSelectedCount();
+        }
+        
+        // Désélectionner toutes les pages
+        function deselectAllPages() {
+            selectedPages.clear();
+            updatePageSelectionUI();
+            updateSelectedCount();
+        }
+        
+        // Mettre à jour l'UI de sélection des pages
+        function updatePageSelectionUI() {
+            const pagePreviews = document.querySelectorAll('.page-preview');
+            pagePreviews.forEach(preview => {
+                const pageNumber = parseInt(preview.dataset.pageNumber);
+                if (selectedPages.has(pageNumber)) {
+                    preview.classList.add('selected');
+                } else {
+                    preview.classList.remove('selected');
+                }
+            });
+        }
+        
+        // Mettre à jour le compteur de pages sélectionnées
+        function updateSelectedCount() {
+            const count = selectedPages.size;
+            selectedCountSpan.textContent = `${count} page(s) sélectionnée(s)`;
+            downloadBtn.disabled = count === 0;
+        }
+        
+        // Appliquer une plage de pages
+        function applyPageRange() {
+            const rangeText = pageRangeInput.value.trim();
+            if (!rangeText) return;
+            
+            try {
+                const pages = parsePageRange(rangeText, pdfDoc.numPages);
+                selectedPages = new Set(pages);
+                updatePageSelectionUI();
+                updateSelectedCount();
+                showStatus(`Plage de pages appliquée avec succès.`, 'success');
+            } catch (error) {
+                showStatus(`Erreur dans le format de la plage: ${error.message}`, 'error');
+            }
+        }
+        
+        // Parser une plage de pages (ex: "1,3-5,7")
+        function parsePageRange(rangeText, maxPage) {
+            const result = new Set();
+            const parts = rangeText.split(',');
+            
+            for (const part of parts) {
+                if (part.includes('-')) {
+                    const [start, end] = part.split('-').map(Number);
+                    if (isNaN(start) || isNaN(end) || start < 1 || end > maxPage || start > end) {
+                        throw new Error(`Plage invalide: ${part}`);
+                    }
+                    for (let i = start; i <= end; i++) {
+                        result.add(i);
+                    }
+                } else {
+                    const page = Number(part);
+                    if (isNaN(page) || page < 1 || page > maxPage) {
+                        throw new Error(`Page invalide: ${part}`);
+                    }
+                    result.add(page);
+                }
+            }
+            
+            return Array.from(result).sort((a, b) => a - b);
+        }
+        
+        // Générer le nouveau PDF
+        async function generateNewPDF() {
+            if (selectedPages.size === 0) return;
+            
+            loadingDiv.style.display = 'block';
+            statusDiv.style.display = 'none';
+            downloadBtn.disabled = true;
+            
+            try {
+                const selectedPagesArray = Array.from(selectedPages).sort((a, b) => a - b);
+                const newPdf = new jsPDF();
+                
+                for (let i = 0; i < selectedPagesArray.length; i++) {
+                    const pageNumber = selectedPagesArray[i];
+                    const page = await pdfDoc.getPage(pageNumber);
+                    const viewport = page.getViewport({ scale: 1.0 });
+                    
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    
+                    await page.render({
+                        canvasContext: context,
+                        viewport: viewport
+                    }).promise;
+                    
+                    const imgData = canvas.toDataURL('image/jpeg', 0.8);
+                    
+                    // Ajouter une nouvelle page sauf pour la première
+                    if (i > 0) {
+                        newPdf.addPage();
+                    }
+                    
+                    // Ajouter l'image à la page
+                    newPdf.addImage(imgData, 'JPEG', 0, 0, viewport.width, viewport.height, undefined, 'FAST');
+                }
+                
+                // Télécharger le PDF
+                newPdf.save('pdf_decoupe.pdf');
+                showStatus(`PDF découpé généré avec succès avec ${selectedPages.size} pages.`, 'success');
+            } catch (error) {
+                showStatus(`Erreur lors de la génération du PDF: ${error.message}`, 'error');
+            } finally {
+                loadingDiv.style.display = 'none';
+                downloadBtn.disabled = false;
+            }
+        }
+        
+        // Afficher un message de statut
+        function showStatus(message, type) {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
